@@ -23,6 +23,10 @@ namespace Rubeus.Commands
             string dc = "";
             string targetDomain = "";
             string targetDC = "";
+            string impersonateDomain = "";
+            bool self = false;
+            bool opsec = false;
+            bool bronzebit = false;
             Interop.KERB_ETYPE encType = Interop.KERB_ETYPE.subkey_keymaterial; // throwaway placeholder, changed to something valid
             KRB_CRED tgs = null;
 
@@ -70,6 +74,10 @@ namespace Rubeus.Commands
                 }
                 targetUser = arguments["/impersonateuser"];
             }
+            if (arguments.ContainsKey("/impersonatedomain"))
+            {
+                impersonateDomain = arguments["/impersonatedomain"];
+            }
             if (arguments.ContainsKey("/targetdomain"))
             {
                 targetDomain = arguments["/targetdomain"];
@@ -91,6 +99,21 @@ namespace Rubeus.Commands
             if (arguments.ContainsKey("/altservice"))
             {
                 altSname = arguments["/altservice"];
+            }
+
+            if (arguments.ContainsKey("/self"))
+            {
+                self = true;
+            }
+
+            if (arguments.ContainsKey("/opsec"))
+            {
+                opsec = true;
+            }
+
+            if (arguments.ContainsKey("/bronzebit"))
+            {
+                bronzebit = true;
             }
 
             if (arguments.ContainsKey("/tgs"))
@@ -140,13 +163,13 @@ namespace Rubeus.Commands
                 {
                     byte[] kirbiBytes = Convert.FromBase64String(kirbi64);
                     KRB_CRED kirbi = new KRB_CRED(kirbiBytes);
-                    S4U.Execute(kirbi, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDomain, targetDC);
+                    S4U.Execute(kirbi, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDC, targetDomain, self, opsec, bronzebit, hash, encType, domain, impersonateDomain);
                 }
                 else if (File.Exists(kirbi64))
                 {
                     byte[] kirbiBytes = File.ReadAllBytes(kirbi64);
                     KRB_CRED kirbi = new KRB_CRED(kirbiBytes);
-                    S4U.Execute(kirbi, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDomain, targetDC);
+                    S4U.Execute(kirbi, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDC, targetDomain, self, opsec, bronzebit, hash, encType, domain, impersonateDomain);
                 }
                 else
                 {
@@ -166,7 +189,7 @@ namespace Rubeus.Commands
                     return;
                 }
 
-                S4U.Execute(user, domain, hash, encType, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDomain, targetDC);
+                S4U.Execute(user, domain, hash, encType, targetUser, targetSPN, outfile, ptt, dc, altSname, tgs, targetDC, targetDomain, self, opsec, bronzebit);
                 return;
             }
             else

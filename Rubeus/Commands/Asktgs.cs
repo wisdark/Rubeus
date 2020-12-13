@@ -17,6 +17,9 @@ namespace Rubeus.Commands
             bool ptt = false;
             string dc = "";
             string service = "";
+            bool enterprise = false;
+            bool opsec = false;
+            bool force = false;
             Interop.KERB_ETYPE requestEnctype = Interop.KERB_ETYPE.subkey_keymaterial;
 
             if (arguments.ContainsKey("/outfile"))
@@ -27,6 +30,21 @@ namespace Rubeus.Commands
             if (arguments.ContainsKey("/ptt"))
             {
                 ptt = true;
+            }
+
+            if (arguments.ContainsKey("/enterprise"))
+            {
+                enterprise = true;
+            }
+
+            if (arguments.ContainsKey("/opsec"))
+            {
+                opsec = true;
+            }
+
+            if (arguments.ContainsKey("/force"))
+            {
+                force = true;
             }
 
             if (arguments.ContainsKey("/dc"))
@@ -71,6 +89,12 @@ namespace Rubeus.Commands
                 return;
             }
 
+            if ((opsec) && (requestEnctype != Interop.KERB_ETYPE.aes256_cts_hmac_sha1) && !(force))
+            {
+                Console.WriteLine("[X] Using /opsec but not using /enctype:aes256, to force this behaviour use /force");
+                return;
+            }
+
             if (arguments.ContainsKey("/ticket"))
             {
                 string kirbi64 = arguments["/ticket"];
@@ -79,14 +103,14 @@ namespace Rubeus.Commands
                 {
                     byte[] kirbiBytes = Convert.FromBase64String(kirbi64);
                     KRB_CRED kirbi = new KRB_CRED(kirbiBytes);
-                    Ask.TGS(kirbi, service, requestEnctype, outfile, ptt, dc, true);
+                    Ask.TGS(kirbi, service, requestEnctype, outfile, ptt, dc, true, enterprise, false, opsec);
                     return;
                 }
                 else if (File.Exists(kirbi64))
                 {
                     byte[] kirbiBytes = File.ReadAllBytes(kirbi64);
                     KRB_CRED kirbi = new KRB_CRED(kirbiBytes);
-                    Ask.TGS(kirbi, service, requestEnctype, outfile, ptt, dc, true);
+                    Ask.TGS(kirbi, service, requestEnctype, outfile, ptt, dc, true, enterprise, false, opsec);
                     return;
                 }
                 else

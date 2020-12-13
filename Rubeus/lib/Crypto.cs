@@ -14,7 +14,13 @@ namespace Rubeus
 
             Console.WriteLine("[*] Input password             : {0}", password);
 
-            string salt = String.Format("{0}{1}", domainName.ToUpper(), userName);
+            string salt = String.Format("{0}{1}", domainName.ToUpper(), userName.ToLower());
+
+            // special case for computer account salts
+            if (userName.EndsWith("$"))
+            {
+                salt = String.Format("{0}host{1}.{2}", domainName.ToUpper(), userName.TrimEnd('$').ToLower(), domainName.ToLower());
+            }
 
             if (!String.IsNullOrEmpty(userName) && !String.IsNullOrEmpty(domainName))
             {
@@ -76,11 +82,11 @@ namespace Rubeus
         }
 
         // Adapted from Vincent LE TOUX' "MakeMeEnterpriseAdmin"
-        public static byte[] KerberosChecksum(byte[] key, byte[] data)
+        public static byte[] KerberosChecksum(byte[] key, byte[] data, Interop.KERB_CHECKSUM_ALGORITHM cksumType = Interop.KERB_CHECKSUM_ALGORITHM.KERB_CHECKSUM_HMAC_MD5)
         {
             Interop.KERB_CHECKSUM pCheckSum;
             IntPtr pCheckSumPtr;
-            int status = Interop.CDLocateCheckSum(Interop.KERB_CHECKSUM_ALGORITHM.KERB_CHECKSUM_HMAC_MD5, out pCheckSumPtr);
+            int status = Interop.CDLocateCheckSum(cksumType, out pCheckSumPtr);
             pCheckSum = (Interop.KERB_CHECKSUM)Marshal.PtrToStructure(pCheckSumPtr, typeof(Interop.KERB_CHECKSUM));
             if (status != 0)
             {

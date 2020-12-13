@@ -1,11 +1,14 @@
 ﻿using System;
 using Asn1;
-using System.IO;
+using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography;
 
-namespace Rubeus
-{
+
+namespace Rubeus {
     public class PA_DATA
     {
+        public static readonly Oid DiffieHellman = new Oid("1.2.840.10046.2.1");
+
         //PA-DATA         ::= SEQUENCE {
         //        -- NOTE: first tag is [1], not [0]
         //        padata-type     [1] Int32,
@@ -53,7 +56,15 @@ namespace Rubeus
             value = new PA_FOR_USER(key, name, realm);
         }
 
-        public PA_DATA(string crealm, string cname, Ticket providedTicket, byte[] clientKey, Interop.KERB_ETYPE etype)
+        public PA_DATA(byte[] key, string name, string realm, uint nonce)
+        {
+            // used for constrained delegation
+            type = Interop.PADATA_TYPE.PA_S4U_X509_USER;
+
+            value = new PA_S4U_X509_USER(key, name, realm, nonce);
+        }
+
+        public PA_DATA(string crealm, string cname, Ticket providedTicket, byte[] clientKey, Interop.KERB_ETYPE etype, bool opsec = false, byte[] req_body = null)
         {
             // include an AP-REQ, so PA-DATA for a TGS-REQ
 
@@ -62,7 +73,40 @@ namespace Rubeus
             // build the AP-REQ
             AP_REQ ap_req = new AP_REQ(crealm, cname, providedTicket, clientKey, etype);
 
+            // make authenticator look more realistic
+            if (opsec)
+            {
+                var rand = new Random();
+                ap_req.authenticator.seq_number = (UInt32)rand.Next(1, Int32.MaxValue);
+                // Could be useful to output the sequence number in case we implement KRB_PRIV or KRB_SAFE messages
+                Console.WriteLine("[+] Sequence number is: {0}", ap_req.authenticator.seq_number);
+
+                // randomize cusec to avoid fingerprinting
+                ap_req.authenticator.cusec = rand.Next(0, 999999);
+
+                if (req_body != null)
+                    ap_req.authenticator.cksum = new Checksum(Interop.KERB_CHECKSUM_ALGORITHM.KERB_CHECKSUM_RSA_MD5, req_body);
+            }
+
             value = ap_req;
+        }
+
+        public PA_DATA(X509Certificate2 pkInitCert, KDCKeyAgreement agreement, KDCReqBody kdcRequestBody) {
+
+            DateTime now = DateTime.UtcNow;
+            KrbPkAuthenticator authenticator = new KrbPkAuthenticator((uint)now.Millisecond, now, now.Millisecond, kdcRequestBody);
+            KrbAuthPack authPack = new KrbAuthPack(authenticator, pkInitCert);
+
+            byte[] pubKeyInfo = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] {
+                AsnElt.MakeInteger(agreement.P),
+                AsnElt.MakeInteger(agreement.G),
+            }).Encode();
+     
+            authPack.ClientPublicValue = new KrbSubjectPublicKeyInfo(new KrbAlgorithmIdentifier(DiffieHellman, pubKeyInfo),            
+                AsnElt.MakeInteger(agreement.Y).Encode());
+            
+            type = Interop.PADATA_TYPE.PK_AS_REQ;
+            value = new PA_PK_AS_REQ(authPack, pkInitCert, agreement);
         }
 
         public PA_DATA(AsnElt body)
@@ -75,18 +119,15 @@ namespace Rubeus
             //Console.WriteLine("tag: {0}", body.Sub[0].Sub[1].TagString);
             type = (Interop.PADATA_TYPE)body.Sub[0].Sub[0].GetInteger();
             byte[] valueBytes = body.Sub[1].Sub[0].GetOctetString();
-            
-            if (type == Interop.PADATA_TYPE.PA_PAC_REQUEST)
-            {
-                value = new KERB_PA_PAC_REQUEST(AsnElt.Decode(body.Sub[1].Sub[0].CopyValue()));
-            }
-            else if (type == Interop.PADATA_TYPE.ENC_TIMESTAMP)
-            {
-                // TODO: parse PA-ENC-TIMESTAMP
-            }
-            else if (type == Interop.PADATA_TYPE.AP_REQ)
-            {
-                // TODO: parse AP_REQ
+
+            switch (type) {
+                case Interop.PADATA_TYPE.PA_PAC_REQUEST:
+                    value = new KERB_PA_PAC_REQUEST(AsnElt.Decode(body.Sub[1].Sub[0].CopyValue()));
+                    break;
+
+                case Interop.PADATA_TYPE.PK_AS_REP:
+                    value = new PA_PK_AS_REP(AsnElt.Decode(body.Sub[1].Sub[0].CopyValue()));
+                    break;
             }
         }
 
@@ -141,6 +182,17 @@ namespace Rubeus
                 AsnElt seq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { nameTypeSeq, paDataElt });
                 return seq;
             }
+            else if (type == Interop.PADATA_TYPE.PA_S4U_X509_USER)
+            {
+                // used for constrained delegation
+                AsnElt blob = AsnElt.MakeBlob(((PA_S4U_X509_USER)value).Encode().Encode());
+                AsnElt blobSeq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { blob });
+
+                paDataElt = AsnElt.MakeImplicit(AsnElt.CONTEXT, 2, blobSeq);
+
+                AsnElt seq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { nameTypeSeq, paDataElt });
+                return seq;
+            }
             else if (type == Interop.PADATA_TYPE.PA_PAC_OPTIONS)
             {
                 AsnElt blob = AsnElt.MakeBlob(((PA_PAC_OPTIONS)value).Encode().Encode());
@@ -151,7 +203,16 @@ namespace Rubeus
                 AsnElt seq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { nameTypeSeq, paDataElt });
                 return seq;
             }
+            else if(type == Interop.PADATA_TYPE.PK_AS_REQ) {
 
+                AsnElt blob = AsnElt.MakeBlob(((PA_PK_AS_REQ)value).Encode().Encode());
+                AsnElt blobSeq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { blob });
+
+                paDataElt = AsnElt.MakeImplicit(AsnElt.CONTEXT, 2, blobSeq);
+
+                AsnElt seq = AsnElt.Make(AsnElt.SEQUENCE, new AsnElt[] { nameTypeSeq, paDataElt });
+                return seq;
+            }
             else
             {
                 return null;
