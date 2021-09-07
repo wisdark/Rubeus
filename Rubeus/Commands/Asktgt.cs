@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using Rubeus.lib.Interop;
 
 
@@ -20,11 +21,13 @@ namespace Rubeus.Commands
             string dc = "";
             string outfile = "";
             string certificate = "";
+            string servicekey = "";
             
             bool ptt = false;
             bool opsec = false;
             bool force = false;
             bool verifyCerts = false;
+            bool getCredentials = false;
             LUID luid = new LUID();
             Interop.KERB_ETYPE encType = Interop.KERB_ETYPE.subkey_keymaterial;
 
@@ -118,6 +121,14 @@ namespace Rubeus.Commands
                     Console.WriteLine("[*] Verifying the entire certificate chain!\r\n");
                     verifyCerts = true;
                 }
+                if (arguments.ContainsKey("/getcredentials"))
+                {
+                    getCredentials = true;
+                }
+            }
+
+            if (arguments.ContainsKey("/servicekey")) {
+                servicekey = arguments["/servicekey"];
             }
 
             if (arguments.ContainsKey("/ptt"))
@@ -128,11 +139,10 @@ namespace Rubeus.Commands
             if (arguments.ContainsKey("/opsec"))
             {
                 opsec = true;
-            }
-
-            if (arguments.ContainsKey("/force"))
-            {
-                force = true;
+                if (arguments.ContainsKey("/force"))
+                {
+                    force = true;
+                }
             }
 
             if (arguments.ContainsKey("/luid"))
@@ -174,13 +184,15 @@ namespace Rubeus.Commands
             }
             if (String.IsNullOrEmpty(domain))
             {
-                domain = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().DomainName;
+                domain = System.DirectoryServices.ActiveDirectory.Domain.GetCurrentDomain().Name;
             }
             if (String.IsNullOrEmpty(hash) && String.IsNullOrEmpty(certificate))
             {
                 Console.WriteLine("\r\n[X] You must supply a /password, /certificate or a [/des|/rc4|/aes128|/aes256] hash!\r\n");
                 return;
             }
+
+            bool changepw = arguments.ContainsKey("/changepw");
 
             if (!((encType == Interop.KERB_ETYPE.des_cbc_md5) || (encType == Interop.KERB_ETYPE.rc4_hmac) || (encType == Interop.KERB_ETYPE.aes128_cts_hmac_sha1) || (encType == Interop.KERB_ETYPE.aes256_cts_hmac_sha1)))
             {
@@ -195,9 +207,9 @@ namespace Rubeus.Commands
                     return;
                 }
                 if (String.IsNullOrEmpty(certificate))
-                    Ask.TGT(user, domain, hash, encType, outfile, ptt, dc, luid, true, opsec);
+                    Ask.TGT(user, domain, hash, encType, outfile, ptt, dc, luid, true, opsec, servicekey, changepw);
                 else
-                    Ask.TGT(user, domain, certificate, password, encType, outfile, ptt, dc, luid, true, verifyCerts);
+                    Ask.TGT(user, domain, certificate, password, encType, outfile, ptt, dc, luid, true, verifyCerts, servicekey, getCredentials);
 
                 return;
             }
