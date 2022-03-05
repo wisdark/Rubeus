@@ -15,12 +15,12 @@ namespace Rubeus {
         //        padata-value    [2] OCTET STRING -- might be encoded AP-REQ
         //}
 
-        public PA_DATA()
+        public PA_DATA(bool pac = true)
         {
             // defaults for creation
             type = Interop.PADATA_TYPE.PA_PAC_REQUEST;
 
-            value = new KERB_PA_PAC_REQUEST();
+            value = new KERB_PA_PAC_REQUEST(pac);
         }
 
         public PA_DATA(bool claims, bool branch, bool fullDC, bool rbcd)
@@ -137,6 +137,9 @@ namespace Rubeus {
                     value = new PA_PK_AS_REP(AsnElt.Decode(body.Sub[1].Sub[0].CopyValue()));
                     break;
                 case Interop.PADATA_TYPE.PA_S4U_X509_USER:
+                    break;
+                case Interop.PADATA_TYPE.ETYPE_INFO2:
+                    value = new ETYPE_INFO2_ENTRY(AsnElt.Decode(body.Sub[1].Sub[0].CopyValue()));
                     break;
             }
         }

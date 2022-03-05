@@ -26,6 +26,21 @@ namespace Rubeus
         public const int KRB_KEY_USAGE_KRB_NON_KERB_CKSUM_SALT = 17;
         public const int KRB_KEY_USAGE_PA_S4U_X509_USER = 26;
 
+        // 7 - https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/311aab27-ebdf-47f7-b939-13dc99b15341
+        public const int GROUP_ATTRIBUTES_DEFAULT = (int)(
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_ENABLED |
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_ENABLED_BY_DEFAULT |
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_MANDATORY
+        );
+
+        // 536870919 - https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/311aab27-ebdf-47f7-b939-13dc99b15341
+        public const int R_GROUP_ATTRIBUTES_DEFAULT = (int)(
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_ENABLED |
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_ENABLED_BY_DEFAULT |
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_MANDATORY |
+            KERB_SID_AND_ATTRIBUTES_Attributes.SE_GROUP_RESOURCE
+        );
+
         // Enums
 
         [Flags]
@@ -44,6 +59,7 @@ namespace Rubeus
             pre_authent = 0x00200000,
             hw_authent = 0x00100000,
             ok_as_delegate = 0x00040000,
+            anonymous = 0x00020000,
             name_canonicalize = 0x00010000,
             //cname_in_pa_data = 0x00040000,
             enc_pa_rep = 0x00010000,
@@ -68,6 +84,7 @@ namespace Rubeus
             CANONICALIZE = 0x00010000,
             CNAMEINADDLTKT = 0x00004000,
             OK_AS_DELEGATE = 0x00040000,
+            REQUEST_ANONYMOUS = 0x00008000,
             UNUSED12 = 0x00080000,
             OPTHARDWAREAUTH = 0x00100000,
             PREAUTHENT = 0x00200000,
@@ -145,6 +162,17 @@ namespace Rubeus
             KRB5_KPASSWD_ACCESSDENIED = 5,
             KRB5_KPASSWD_BAD_VERSION = 6,
             KRB5_KPASSWD_INITIAL_FLAG_NEEDED = 7
+        }
+
+        // from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/311aab27-ebdf-47f7-b939-13dc99b15341
+        [Flags]
+        public enum KERB_SID_AND_ATTRIBUTES_Attributes
+        {
+            SE_GROUP_MANDATORY = 1,          // Group is mandatory for the user and cannot be disabled.
+            SE_GROUP_ENABLED_BY_DEFAULT = 2, // Group is marked as enabled by default.
+            SE_GROUP_ENABLED = 4,            // Group is enabled for use.
+            SE_GROUP_OWNER = 8,              // Group can be assigned as an owner of a resource.
+            SE_GROUP_RESOURCE = 536870912,   // Group is a domain-local or resource group.
         }
 
         public enum KERB_CHECKSUM_ALGORITHM
@@ -267,7 +295,9 @@ namespace Rubeus
             KDC_ERR_PREAUTH_FAILED = 0x18, //Pre-authentication information was invalid
             KDC_ERR_PREAUTH_REQUIRED = 0x19, // Additional preauthentication required
             KDC_ERR_SERVER_NOMATCH = 0x1A, //KDC does not know about the requested server
-            KDC_ERR_SVC_UNAVAILABLE = 0x1B, // KDC is unavailable
+            KDC_ERR_MUST_USE_USER2USER = 0x1B,
+            KDC_ERR_PATH_NOT_ACCEPTED = 0x1C,
+            KDC_ERR_SVC_UNAVAILABLE = 0x1D, // KDC is unavailable (modified as stated here: https://github.com/dotnet/Kerberos.NET/blob/develop/Kerberos.NET/Entities/Krb/KerberosErrorCode.cs)
             KRB_AP_ERR_BAD_INTEGRITY = 0x1F, // Integrity check on decrypted field failed
             KRB_AP_ERR_TKT_EXPIRED = 0x20, // The ticket has expired
             KRB_AP_ERR_TKT_NYV = 0x21, //The ticket is not yet valid
@@ -700,6 +730,15 @@ namespace Rubeus
             RESOURCE_GROUPS = 512
         }
 
+        // from https://download.samba.org/pub/samba/patches/security/samba-4.15.1-security-2021-11-09.patch
+        [Flags]
+        public enum PacAttribute : Int32
+        {
+            PAC_NOT_REQUESTED = 0x00000000,
+            PAC_WAS_REQUESTED = 0x00000001,
+            PAC_WAS_GIVEN_IMPLICITLY = 0x00000002
+        }
+
         [Flags]
         public enum LDAPUserAccountControl : Int32
         {
@@ -724,6 +763,7 @@ namespace Rubeus
             DONT_REQ_PREAUTH = 4194304,
             PASSWORD_EXPIRED = 8388608,
             TRUSTED_TO_AUTH_FOR_DELEGATION = 16777216,
+            NO_AUTH_DATA_REQUIRED = 33554432,
             PARTIAL_SECRETS_ACCOUNT = 67108864
         }
 
@@ -1509,7 +1549,7 @@ namespace Rubeus
 
         [DllImport("secur32.dll", SetLastError = true)]
         public static extern int LsaRegisterLogonProcess(
-            LSA_STRING_IN LogonProcessName,
+            ref LSA_STRING_IN LogonProcessName,
             out IntPtr LsaHandle,
             out ulong SecurityMode
         );
