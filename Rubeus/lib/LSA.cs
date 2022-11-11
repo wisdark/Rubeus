@@ -234,7 +234,7 @@ namespace Rubeus
             //      and finally uses LsaCallAuthenticationPackage w/ a KerbRetrieveEncodedTicketMessage message type
             //      to extract the Kerberos ticket data in .kirbi format (service tickets and TGTs)
 
-            //  For elevated enumeration, the code first uses LsaConnectUntrusted() to connect and LsaCallAuthenticationPackage w/ a KerbQueryTicketCacheMessage message type
+            //  For non-elevated enumeration, the code first uses LsaConnectUntrusted() to connect and LsaCallAuthenticationPackage w/ a KerbQueryTicketCacheMessage message type
             //      to enumerate all cached tickets, then uses LsaCallAuthenticationPackage w/ a KerbRetrieveEncodedTicketMessage message type
             //      to extract the Kerberos ticket data in .kirbi format (service tickets and TGTs)
 
@@ -664,7 +664,12 @@ namespace Rubeus
                             Console.WriteLine("{0}  UpnDns                 :", indent);
                             Console.WriteLine("{0}    DNS Domain Name      : {1}", indent, upnDns.DnsDomainName);
                             Console.WriteLine("{0}    UPN                  : {1}", indent, upnDns.Upn);
-                            Console.WriteLine("{0}    Flags                : {1}", indent, upnDns.Flags);
+                            Console.WriteLine("{0}    Flags                : ({1}) {2}", indent, (int)upnDns.Flags, upnDns.Flags);
+                            if (upnDns.Flags.HasFlag(Interop.UpnDnsFlags.EXTENDED))
+                            {
+                                Console.WriteLine("{0}    SamName              : {1}", indent, upnDns.SamName);
+                                Console.WriteLine("{0}    Sid                  : {1}", indent, upnDns.Sid.Value);
+                            }
                         }
                         else if (pacInfoBuffer is SignatureData sigData)
                         {
