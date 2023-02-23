@@ -55,11 +55,17 @@ namespace Rubeus.Commands
             string endTime = "";
             string renewTill = "";
             bool newPac = true;
+            bool extendedUpnDns = arguments.ContainsKey("/extendedupndns");
 
             string outfile = "";
             bool ptt = false;
             bool printcmd = false;
+            Int32 rodcNumber = 0;
 
+            if (arguments.ContainsKey("/rodcNumber"))
+            {
+                rodcNumber = Int32.Parse(arguments["/rodcNumber"]);
+            }
             // user information mostly for the PAC
             if (arguments.ContainsKey("/user"))
             {
@@ -426,9 +432,17 @@ namespace Rubeus.Commands
                     resourceGroups,
                     uac,
                     newPac,
+                    extendedUpnDns,
                     outfile,
                     ptt,
-                    printcmd
+                    printcmd,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    rodcNumber
                     );
                 return;
             }
